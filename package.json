@@ -1,0 +1,20 @@
+{
+  "name": "branch-chat",
+  "version": "1.0.0",
+  "private": true,
+  "type": "module",
+  "description": "树状分支对话：卡片式回复 + 子卡片(+) + 平行卡片(~)，DeepSeek 流式输出",
+  "scripts": {
+    "start": "node server.mjs"
+  },
+  "theme": {
+    "background": {
+      "color": "#0B0C0E",
+      "image": "/theme-bg.jpg",
+      "imageOpacity": 0.56
+    },
+    "cardRoot": "#111317",
+    "cardChild": "#111317",
+    "cardParallel": "#111317"
+  }
+}

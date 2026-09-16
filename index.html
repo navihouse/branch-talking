@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>BRANCH · 树状分支对话</title>
+  <link rel="icon" href="data:," />
+  <link rel="stylesheet" href="vendor/katex/katex.min.css" />
+  <link rel="stylesheet" href="styles.css" />
+  <script src="vendor/katex/katex.min.js"></script>
+</head>
+<body>
+  <div id="bgLayer" class="bg-layer" hidden></div>
+
+  <div id="app" class="empty">
+    <header class="topbar">
+      <div class="brand-mini"><span class="dot"></span> BRANCH</div>
+      <div class="actions">
+        <span id="status" class="status"></span>
+        <button id="themeBtn" class="btn ghost small" type="button">主题</button>
+        <button id="clearBtn" class="btn ghost small" type="button">清空</button>
+      </div>
+    </header>
+
+    <div id="banner" class="banner" hidden></div>
+
+    <main id="main">
+      <section id="hero" class="hero">
+        <pre class="ascii">██████╗ ██████╗  █████╗ ███╗   ██╗ ██████╗██╗  ██╗
+██╔══██╗██╔══██╗██╔══██╗████╗  ██║██╔════╝██║  ██║
+██████╔╝██████╔╝███████║██╔██╗ ██║██║     ███████║
+██╔══██╗██╔══██╗██╔══██║██║╚██╗██║██║     ██╔══██║
+██████╔╝██║  ██║██║  ██║██║ ╚████║╚██████╗██║  ██║
+╚═════╝ ╚═╝  ╚═╝╚═╝  ╚═╝╚═╝  ╚═══╝ ╚═════╝╚═╝  ╚═╝</pre>
+        <p class="subtitle">聊出主干 · 长出分支 · 选中文字即可横向拓展</p>
+        <p class="hint-line">
+          <span class="kbd">+</span> 创建子卡片，继续推进话题 &nbsp;·&nbsp;
+          <span class="kbd">~</span> 选中文字后创建平行卡片，横向拓展 &nbsp;·&nbsp;
+          支持 Markdown 与 <span class="kbd">$LaTeX$</span> 公式
+        </p>
+      </section>
+
+      <div id="canvas" class="canvas">
+        <section id="tree" class="tree"></section>
+      </div>
+    </main>
+
+    <form id="composer" class="composer">
+      <textarea id="promptInput" rows="1" placeholder="输入提示词，Enter 发送 · Shift+Enter 换行"></textarea>
+      <button type="submit" class="btn primary" id="sendBtn">发送</button>
+    </form>
+
+    <div id="toast" class="toast" hidden></div>
+
+    <button id="selBtn" class="sel-btn" type="button" hidden title="用选中内容创建平行卡片">~</button>
+
+    <aside id="themePanel" class="theme-panel" hidden>
+      <div class="theme-head">
+        <span>主题设置</span>
+        <button id="themeClose" class="wbtn wbtn-close" type="button" title="关闭">✕</button>
+      </div>
+
+      <div class="theme-body">
+        <div class="theme-group-title">背景</div>
+        <div class="theme-row">
+          <label for="themeBgColor">背景颜色</label>
+          <input id="themeBgColor" class="hex-input" type="text" maxlength="7" placeholder="#0B0C0E" spellcheck="false" />
+          <span id="swBgColor" class="swatch"></span>
+        </div>
+        <div class="theme-row">
+          <label for="themeBgImage">背景图片</label>
+          <input id="themeBgImage" type="file" accept="image/png,image/jpeg,image/gif,image/webp,image/bmp" />
+        </div>
+        <div class="theme-row">
+          <label for="themeBgOpacity">图片透明度</label>
+          <input id="themeBgOpacity" type="range" min="0" max="100" step="1" />
+          <span id="themeBgOpacityVal" class="theme-val">35%</span>
+        </div>
+        <div class="theme-row">
+          <button id="themeBgClear" class="btn ghost small" type="button">清除背景图片</button>
+        </div>
+
+        <div class="theme-group-title">卡片颜色（#RRGGBB）</div>
+        <div class="theme-row">
+          <label for="themeCardRoot">主卡片</label>
+          <input id="themeCardRoot" class="hex-input" type="text" maxlength="7" placeholder="#FFFFFF" spellcheck="false" />
+          <span id="swCardRoot" class="swatch"></span>
+        </div>
+        <div class="theme-row">
+          <label for="themeCardChild">子卡片</label>
+          <input id="themeCardChild" class="hex-input" type="text" maxlength="7" placeholder="#FFFFFF" spellcheck="false" />
+          <span id="swCardChild" class="swatch"></span>
+        </div>
+        <div class="theme-row">
+          <label for="themeCardParallel">平行卡片</label>
+          <input id="themeCardParallel" class="hex-input" type="text" maxlength="7" placeholder="#FFFFFF" spellcheck="false" />
+          <span id="swCardParallel" class="swatch"></span>
+        </div>
+
+        <div class="theme-foot">
+          <button id="themeReset" class="btn ghost small" type="button">恢复默认</button>
+          <span id="themeStatus" class="theme-status"></span>
+        </div>
+        <p class="theme-note">主题保存在项目根目录的 <code>package.json</code> 的 <code>theme</code> 字段。</p>
+      </div>
+    </aside>
+  </div>
+
+  <script src="app.js"></script>
+</body>
+</html>

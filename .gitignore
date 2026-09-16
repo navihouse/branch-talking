@@ -1,0 +1,16 @@
+# 环境变量与密钥：绝不提交
+.env
+.env.*
+!.env.example
+
+# 依赖与产物
+node_modules/
+*.log
+.DS_Store
+
+# 编辑器
+.vscode/
+.idea/
+
+# 背景图片
+*.jpg
