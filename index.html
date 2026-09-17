@@ -8,6 +8,7 @@
   <link rel="stylesheet" href="vendor/katex/katex.min.css" />
   <link rel="stylesheet" href="styles.css" />
   <script src="vendor/katex/katex.min.js"></script>
+  <script type="module" src="pdfjs-loader.mjs"></script>
 </head>
 <body>
   <div id="bgLayer" class="bg-layer" hidden></div>
@@ -46,9 +47,23 @@
     </main>
 
     <form id="composer" class="composer">
-      <textarea id="promptInput" rows="1" placeholder="输入提示词，Enter 发送 · Shift+Enter 换行"></textarea>
-      <button type="submit" class="btn primary" id="sendBtn">发送</button>
+      <div id="attachStrip" class="attach-strip" hidden></div>
+      <div class="composer-main">
+        <button id="attachBtn" class="attach-btn" type="button" title="添加文档 / 图片（也可直接拖拽或粘贴）">📎</button>
+        <textarea id="promptInput" rows="1" placeholder="输入提示词，Enter 发送 · Shift+Enter 换行 · 可拖入文档或图片"></textarea>
+        <button type="submit" class="btn primary" id="sendBtn">发送</button>
+      </div>
     </form>
+
+    <input
+      id="attachInput"
+      type="file"
+      multiple
+      hidden
+      accept="image/png,image/jpeg,image/gif,image/webp,image/bmp,.pdf,.docx,.txt,.md,.markdown,.csv,.tsv,.json,.xml,.yaml,.yml,.log,.js,.ts,.py,.java,.c,.h,.cpp,.cs,.go,.rs,.rb,.php,.sql,.sh,.html,.css"
+    />
+
+    <div id="dropMask" class="drop-mask" hidden><span>松开即可添加文档 / 图片</span></div>
 
     <div id="toast" class="toast" hidden></div>
 

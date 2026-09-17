@@ -33,6 +33,9 @@
 
 * { box-sizing: border-box; }
 
+/* 作者样式里的 display 会覆盖 [hidden] 的 UA 规则，这里统一兜底 */
+[hidden] { display: none !important; }
+
 html, body {
   margin: 0;
   height: 100%;
@@ -685,13 +688,130 @@ body::before {
 .composer {
   flex: none;
   display: flex;
-  gap: 10px;
-  align-items: flex-end;
+  flex-direction: column;
+  gap: 8px;
   width: 100%;
   max-width: 1200px;
   margin: 0 auto;
   padding: 12px 18px 16px;
 }
+
+.composer-main {
+  display: flex;
+  gap: 10px;
+  align-items: flex-end;
+  width: 100%;
+}
+
+/* ---------- 附件（文档 / 图片） ---------- */
+.attach-btn {
+  flex: none;
+  width: 42px;
+  height: 42px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1;
+  cursor: pointer;
+  transition: 0.15s;
+}
+.attach-btn:hover {
+  color: var(--text);
+  border-color: var(--accent);
+  background: var(--panel-3);
+}
+
+.attach-strip {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  padding: 8px 10px;
+  border: 1px dashed var(--border);
+  border-radius: 10px;
+  background: var(--panel);
+}
+
+.attach-chip {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  max-width: 250px;
+  padding: 5px 7px;
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  background: var(--panel-2);
+  font-size: 11.5px;
+}
+.attach-chip.loading { opacity: 0.55; }
+.attach-chip.error { border-color: rgba(255, 123, 114, 0.5); }
+
+.attach-thumb {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  object-fit: cover;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+}
+.attach-icon {
+  flex: none;
+  width: 34px;
+  height: 34px;
+  display: grid;
+  place-items: center;
+  border-radius: 6px;
+  background: var(--panel-3);
+  font-size: 15px;
+}
+.attach-meta { display: flex; flex-direction: column; min-width: 0; }
+.attach-name {
+  color: var(--text);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.attach-sub { color: var(--muted-2); font-size: 10.5px; }
+
+.attach-x {
+  flex: none;
+  border: none;
+  background: transparent;
+  color: var(--muted-2);
+  cursor: pointer;
+  font-size: 12px;
+  padding: 2px 4px;
+  border-radius: 5px;
+}
+.attach-x:hover { color: var(--danger); background: rgba(255, 123, 114, 0.12); }
+
+.drop-mask {
+  position: fixed;
+  inset: 0;
+  z-index: 80;
+  display: grid;
+  place-items: center;
+  background: rgba(11, 12, 14, 0.72);
+  backdrop-filter: blur(3px);
+  outline: 2px dashed var(--accent);
+  outline-offset: -10px;
+  color: var(--accent);
+  font-size: 15px;
+  letter-spacing: 1px;
+  pointer-events: none;
+}
+
+/* 卡片上展示这条提问附带了什么 */
+.card-attach {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 0 0 10px;
+}
+.card-attach .attach-chip { background: var(--panel-2); }
 
 .composer textarea {
   flex: 1;
@@ -755,9 +875,7 @@ body::before {
   animation: sel-pop 0.12s ease both;
   user-select: none;
 }
-/* 注意：作者样式里的 display 会覆盖 [hidden] 的 UA display:none，必须显式处理 */
-.sel-btn[hidden] { display: none; }
-
+/* 注意：作者样式里的 display 会覆盖 [hidden] 的 UA display:none，统一由全局 [hidden] 兜底 */
 .sel-btn:hover {
   color: #0b0c0e;
   background: var(--accent-3);

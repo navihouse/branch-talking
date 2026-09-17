@@ -45,6 +45,10 @@
 
   const bgLayer = document.getElementById('bgLayer');
   const selBtn = document.getElementById('selBtn');
+  const attachBtn = document.getElementById('attachBtn');
+  const attachInput = document.getElementById('attachInput');
+  const attachStrip = document.getElementById('attachStrip');
+  const dropMask = document.getElementById('dropMask');
   const themeBtn = document.getElementById('themeBtn');
   const themePanel = document.getElementById('themePanel');
   const themeClose = document.getElementById('themeClose');
@@ -82,6 +86,9 @@
       Object.values(parsed.nodes).forEach((n) => {
         n.children = n.children || [];
         n.parallels = n.parallels || [];
+        n.images = n.images || [];
+        n.docs = n.docs || [];
+        if (!n.title) n.title = n.prompt || '';
         if (n.status === 'streaming') n.status = 'interrupted';
         const kept = [];
         n.children.forEach((cid) => {
@@ -100,11 +107,15 @@
     }
   }
 
+  let quotaWarned = false;
   function saveState() {
     try {
       localStorage.setItem(STORAGE_KEY, JSON.stringify(state));
     } catch {
-      /* 存储不可用时静默忽略 */
+      if (!quotaWarned) {
+        quotaWarned = true;
+        toast('本地存储已满，新卡片可能无法保存（附件文档太大时会这样）');
+      }
     }
   }
 
@@ -313,7 +324,7 @@
     // 最小化后显示的标题（点击卡片可还原）
     const title = document.createElement('span');
     title.className = 'collapsed-title';
-    title.textContent = plain(node.prompt || node.content, 72);
+    title.textContent = plain(node.title || node.prompt || node.content, 72);
     head.appendChild(title);
 
     const time = document.createElement('span');
@@ -336,6 +347,19 @@
     head.appendChild(win);
 
     card.appendChild(head);
+
+    // 这条提问附带的资料（图片缩略图 / 文档名）
+    const atts = (node.images || [])
+      .map((im) => ({ name: im.name, thumb: im.thumb, icon: '🖼' }))
+      .concat((node.docs || []).map((d) => ({ name: d.name, icon: '📄', sub: d.chars ? d.chars + ' 字' : '' })));
+    if (atts.length) {
+      const strip = document.createElement('div');
+      strip.className = 'card-attach';
+      atts.forEach((a) => {
+        strip.appendChild(attachChipEl({ name: a.name, thumb: a.thumb, icon: a.icon, sub: a.sub }));
+      });
+      card.appendChild(strip);
+    }
 
     if (node.sourceText) {
       const src = document.createElement('div');
@@ -848,6 +872,373 @@
     );
   }
 
+  /* ---------------- 附件（文档 / 图片） ---------------- */
+
+  const MAX_ATTACH = 6;
+  const MAX_ATTACH_BYTES = 20 * 1024 * 1024;
+  const MAX_DOC_CHARS = 20000;
+  const IMAGE_MAX_DIM = 1600;
+
+  const TEXT_EXT = new Set([
+    'txt', 'md', 'markdown', 'csv', 'tsv', 'json', 'xml', 'yaml', 'yml', 'log', 'ini', 'conf', 'env',
+    'js', 'mjs', 'cjs', 'ts', 'tsx', 'jsx', 'py', 'java', 'c', 'h', 'cpp', 'hpp', 'cs', 'go', 'rs',
+    'rb', 'php', 'sql', 'sh', 'bash', 'ps1', 'html', 'htm', 'css', 'scss', 'less', 'vue', 'svelte', 'tex',
+  ]);
+
+  let pendingAttachments = [];
+  // 图片只在「当次请求」真正发送；节点里只存缩略图，避免 localStorage / 上下文被撑爆
+  const sessionImages = new Map();
+
+  function fmtSize(bytes) {
+    if (bytes == null) return '';
+    if (bytes < 1024) return bytes + ' B';
+    if (bytes < 1024 * 1024) return (bytes / 1024).toFixed(1) + ' KB';
+    return (bytes / 1024 / 1024).toFixed(1) + ' MB';
+  }
+
+  function extOf(name) {
+    const m = /\.([a-z0-9]+)$/i.exec(name || '');
+    return m ? m[1].toLowerCase() : '';
+  }
+
+  function fileToText(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result || ''));
+      r.onerror = () => reject(new Error('读取失败'));
+      r.readAsText(file);
+    });
+  }
+
+  function fileToDataUrl(file) {
+    return new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = () => resolve(String(r.result || ''));
+      r.onerror = () => reject(new Error('读取失败'));
+      r.readAsDataURL(file);
+    });
+  }
+
+  function loadImageEl(src) {
+    return new Promise((resolve, reject) => {
+      const img = new Image();
+      img.onload = () => resolve(img);
+      img.onerror = () => reject(new Error('图片无法解码（文件可能已损坏）'));
+      img.src = src;
+    });
+  }
+
+  // 图片统一缩放到长边 <= 1600，既省 token 也避免请求体过大
+  async function prepareImage(file) {
+    const raw = await fileToDataUrl(file);
+    // 浏览器解不出来 = 图片本身无效，直接报错，别把坏图发给模型（服务端会 400）
+    const img = await loadImageEl(raw);
+    const w0 = img.naturalWidth || 0;
+    const h0 = img.naturalHeight || 0;
+    const scale = Math.min(1, IMAGE_MAX_DIM / Math.max(w0 || 1, h0 || 1));
+    const draw = (tw, th) => {
+      const c = document.createElement('canvas');
+      c.width = Math.max(1, tw);
+      c.height = Math.max(1, th);
+      c.getContext('2d').drawImage(img, 0, 0, Math.max(1, tw), Math.max(1, th));
+      return c;
+    };
+    let full = raw;
+    if (scale < 1 || file.size > 1.2 * 1024 * 1024) {
+      full = draw(Math.round(w0 * scale), Math.round(h0 * scale)).toDataURL('image/jpeg', 0.86);
+    }
+    const tScale = Math.min(1, 160 / Math.max(w0 || 1, h0 || 1));
+    let thumb = raw;
+    try {
+      thumb = draw(Math.round(w0 * tScale), Math.round(h0 * tScale)).toDataURL('image/jpeg', 0.7);
+    } catch {
+      /* 保底用原图 */
+    }
+    return { full, thumb, width: w0, height: h0 };
+  }
+
+  // ---- DOCX：本质是 ZIP，取出 word/document.xml ----
+  function findZipEntry(buf, target) {
+    const dv = new DataView(buf.buffer, buf.byteOffset, buf.byteLength);
+    let eocd = -1;
+    const floor = Math.max(0, buf.length - 66000);
+    for (let i = buf.length - 22; i >= floor; i--) {
+      if (dv.getUint32(i, true) === 0x06054b50) {
+        eocd = i;
+        break;
+      }
+    }
+    if (eocd < 0) return null;
+    const count = dv.getUint16(eocd + 10, true);
+    let off = dv.getUint32(eocd + 16, true);
+    for (let n = 0; n < count; n++) {
+      if (off + 46 > buf.length || dv.getUint32(off, true) !== 0x02014b50) return null;
+      const method = dv.getUint16(off + 10, true);
+      const compSize = dv.getUint32(off + 20, true);
+      const nameLen = dv.getUint16(off + 28, true);
+      const extraLen = dv.getUint16(off + 30, true);
+      const commentLen = dv.getUint16(off + 32, true);
+      const localOff = dv.getUint32(off + 42, true);
+      const name = new TextDecoder().decode(buf.subarray(off + 46, off + 46 + nameLen));
+      if (name === target) {
+        const lNameLen = dv.getUint16(localOff + 26, true);
+        const lExtraLen = dv.getUint16(localOff + 28, true);
+        const start = localOff + 30 + lNameLen + lExtraLen;
+        return { method, data: buf.subarray(start, start + compSize) };
+      }
+      off += 46 + nameLen + extraLen + commentLen;
+    }
+    return null;
+  }
+
+  async function inflateRaw(bytes) {
+    if (typeof DecompressionStream !== 'function') {
+      throw new Error('当前浏览器不支持解压，请使用较新的 Chrome / Edge');
+    }
+    const stream = new Blob([bytes]).stream().pipeThrough(new DecompressionStream('deflate-raw'));
+    return new Uint8Array(await new Response(stream).arrayBuffer());
+  }
+
+  function xmlToPlainText(xml) {
+    return xml
+      .replace(/<w:tab[^>]*\/>/g, '\t')
+      .replace(/<w:br[^>]*\/>/g, '\n')
+      .replace(/<\/w:p>/g, '\n')
+      .replace(/<[^>]+>/g, '')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&amp;/g, '&')
+      .replace(/[ \t]+\n/g, '\n')
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+  }
+
+  async function extractDocx(file) {
+    const buf = new Uint8Array(await file.arrayBuffer());
+    const entry = findZipEntry(buf, 'word/document.xml');
+    if (!entry) throw new Error('不是有效的 .docx（未找到 document.xml）');
+    const bytes = entry.method === 0 ? entry.data : await inflateRaw(entry.data);
+    return xmlToPlainText(new TextDecoder('utf-8').decode(bytes));
+  }
+
+  // ---- PDF：使用本地化的 pdf.js 抽取文字 ----
+  async function extractPdf(file, onProgress) {
+    const lib = window.pdfjsLib;
+    if (!lib) throw new Error('PDF 解析库还没加载好，请稍后重试');
+    const data = new Uint8Array(await file.arrayBuffer());
+    const doc = await lib.getDocument({ data, isEvalSupported: false, useWorkerFetch: false }).promise;
+    const pages = Math.min(doc.numPages, 40);
+    const parts = [];
+    for (let p = 1; p <= pages; p++) {
+      const page = await doc.getPage(p);
+      const tc = await page.getTextContent();
+      const line = tc.items.map((it) => it.str || '').join(' ').replace(/\s+/g, ' ').trim();
+      if (line) parts.push(line);
+      if (onProgress) onProgress(p, pages);
+    }
+    try {
+      doc.destroy();
+    } catch {
+      /* ignore */
+    }
+    return parts.join('\n\n');
+  }
+
+  async function addFiles(fileList) {
+    const files = Array.from(fileList || []);
+    for (const file of files) {
+      if (pendingAttachments.length >= MAX_ATTACH) {
+        toast(`最多同时添加 ${MAX_ATTACH} 个附件`);
+        break;
+      }
+      if (file.size > MAX_ATTACH_BYTES) {
+        toast(`${file.name} 超过 20MB，已跳过`);
+        continue;
+      }
+
+      const ext = extOf(file.name);
+      const isImage =
+        /^image\//.test(file.type) && ['png', 'jpg', 'jpeg', 'gif', 'webp', 'bmp'].includes(ext || file.type.split('/')[1]);
+
+      const att = {
+        id: 'a' + Date.now().toString(36) + Math.random().toString(36).slice(2, 6),
+        name: file.name,
+        size: file.size,
+        kind: '',
+        status: 'loading',
+        text: '',
+        full: '',
+        thumb: '',
+        note: '',
+      };
+      pendingAttachments.push(att);
+      renderAttachments();
+
+      try {
+        if (isImage) {
+          att.kind = 'image';
+          if (file.type === 'image/gif') {
+            att.full = await fileToDataUrl(file);
+            att.thumb = att.full;
+          } else {
+            const prep = await prepareImage(file);
+            att.full = prep.full;
+            att.thumb = prep.thumb;
+            att.note = prep.width ? `${prep.width}×${prep.height}` : '';
+          }
+          att.status = 'ready';
+        } else if (ext === 'pdf') {
+          att.kind = 'doc';
+          const text = await extractPdf(file, (p, total) => {
+            att.note = `解析中 ${p}/${total}`;
+            renderAttachments();
+          });
+          att.text = text.slice(0, MAX_DOC_CHARS);
+          att.note = `${att.text.length} 字` + (text.length > MAX_DOC_CHARS ? '（已截断）' : '');
+          att.status = att.text.trim() ? 'ready' : 'error';
+          if (att.status === 'error') att.note = '没有抽取到文字（可能是扫描件）';
+        } else if (ext === 'docx') {
+          att.kind = 'doc';
+          const text = await extractDocx(file);
+          att.text = text.slice(0, MAX_DOC_CHARS);
+          att.note = `${att.text.length} 字` + (text.length > MAX_DOC_CHARS ? '（已截断）' : '');
+          att.status = att.text.trim() ? 'ready' : 'error';
+          if (att.status === 'error') att.note = '文档里没有文字';
+        } else if (TEXT_EXT.has(ext) || /^text\//.test(file.type) || file.type === 'application/json') {
+          att.kind = 'doc';
+          const text = await fileToText(file);
+          att.text = text.slice(0, MAX_DOC_CHARS);
+          att.note = `${att.text.length} 字` + (text.length > MAX_DOC_CHARS ? '（已截断）' : '');
+          att.status = 'ready';
+        } else {
+          att.status = 'error';
+          att.note = '不支持的格式';
+          toast(`${file.name}：暂不支持该格式（支持图片 / PDF / DOCX / 文本类）`);
+        }
+      } catch (err) {
+        att.status = 'error';
+        att.note = (err && err.message) || '解析失败';
+        toast(`${file.name} 解析失败：${att.note}`);
+      }
+      renderAttachments();
+    }
+  }
+
+  function attachChipEl(opts) {
+    const chip = document.createElement('div');
+    chip.className = 'attach-chip' + (opts.status ? ' ' + opts.status : '');
+    if (opts.thumb) {
+      const img = document.createElement('img');
+      img.className = 'attach-thumb';
+      img.src = opts.thumb;
+      img.alt = opts.name || '';
+      chip.appendChild(img);
+    } else {
+      const ic = document.createElement('span');
+      ic.className = 'attach-icon';
+      ic.textContent = opts.icon || '📄';
+      chip.appendChild(ic);
+    }
+    const meta = document.createElement('span');
+    meta.className = 'attach-meta';
+    const nm = document.createElement('span');
+    nm.className = 'attach-name';
+    nm.textContent = opts.name || '';
+    const sub = document.createElement('span');
+    sub.className = 'attach-sub';
+    sub.textContent = opts.sub || '';
+    meta.appendChild(nm);
+    meta.appendChild(sub);
+    chip.appendChild(meta);
+    if (opts.removable) {
+      const x = document.createElement('button');
+      x.type = 'button';
+      x.className = 'attach-x';
+      x.textContent = '✕';
+      x.title = '移除';
+      x.dataset.removeAtt = opts.id;
+      chip.appendChild(x);
+    }
+    return chip;
+  }
+
+  function renderAttachments() {
+    attachStrip.innerHTML = '';
+    if (!pendingAttachments.length) {
+      attachStrip.hidden = true;
+      return;
+    }
+    attachStrip.hidden = false;
+    pendingAttachments.forEach((att) => {
+      const icon = att.status === 'loading' ? '…' : att.status === 'error' ? '⚠' : att.kind === 'image' ? '🖼' : '📄';
+      attachStrip.appendChild(
+        attachChipEl({
+          id: att.id,
+          name: att.name,
+          thumb: att.kind === 'image' ? att.thumb : '',
+          icon,
+          sub: att.note || fmtSize(att.size),
+          status: att.status === 'loading' ? 'loading' : att.status === 'error' ? 'error' : '',
+          removable: true,
+        })
+      );
+    });
+  }
+
+  function clearAttachments() {
+    pendingAttachments = [];
+    renderAttachments();
+  }
+
+  function initAttachments() {
+    attachBtn.addEventListener('click', () => attachInput.click());
+    attachInput.addEventListener('change', () => {
+      addFiles(attachInput.files);
+      attachInput.value = '';
+    });
+    attachStrip.addEventListener('click', (e) => {
+      const btn = e.target.closest('[data-remove-att]');
+      if (!btn) return;
+      pendingAttachments = pendingAttachments.filter((a) => a.id !== btn.dataset.removeAtt);
+      renderAttachments();
+    });
+
+    const hasFiles = (e) => e.dataTransfer && Array.from(e.dataTransfer.types || []).indexOf('Files') >= 0;
+    let dragDepth = 0;
+    window.addEventListener('dragenter', (e) => {
+      if (!hasFiles(e)) return;
+      dragDepth += 1;
+      dropMask.hidden = false;
+      e.preventDefault();
+    });
+    window.addEventListener('dragover', (e) => {
+      if (hasFiles(e)) e.preventDefault();
+    });
+    window.addEventListener('dragleave', () => {
+      dragDepth -= 1;
+      if (dragDepth <= 0) {
+        dragDepth = 0;
+        dropMask.hidden = true;
+      }
+    });
+    window.addEventListener('drop', (e) => {
+      if (!hasFiles(e)) return;
+      e.preventDefault();
+      dragDepth = 0;
+      dropMask.hidden = true;
+      addFiles(e.dataTransfer.files);
+    });
+
+    document.addEventListener('paste', (e) => {
+      const items = e.clipboardData && e.clipboardData.files;
+      if (!items || !items.length) return;
+      e.preventDefault();
+      addFiles(items);
+    });
+  }
+
   /* ---------------- generation ---------------- */
 
   // 安全上限：仅在历史超预算时从最老整轮丢弃（会牺牲一次缓存命中）
@@ -867,6 +1258,24 @@
     return node.prompt || '';
   }
 
+  // 祖先卡片上的图片只留一句说明，不重发 base64（否则上下文会被瞬间撑爆）
+  function imageNote(node) {
+    const imgs = node.images || [];
+    if (!imgs.length) return '';
+    return '\n\n（本卡片附带图片：' + imgs.map((i) => i.name).join('、') + '）';
+  }
+
+  // 当前这条请求：带图片时用多模态 content 数组
+  function currentUserContent(node) {
+    const text = composeUserMessage(node);
+    const imgs = sessionImages.get(node.id) || [];
+    if (!imgs.length) return text;
+    return [
+      { type: 'text', text: text || '请分析这些图片。' },
+      ...imgs.map((url) => ({ type: 'image_url', image_url: { url, detail: 'low' } })),
+    ];
+  }
+
   function buildMessages(node) {
     const chain = [];
     let parent = node.parentId ? state.nodes[node.parentId] : null;
@@ -880,7 +1289,8 @@
     const turns = [];
     chain.forEach((a) => {
       const ask = composeUserMessage(a);
-      if (ask) turns.push({ role: 'user', content: ask });
+      const note = imageNote(a);
+      if (ask || note) turns.push({ role: 'user', content: (ask || '') + note });
       if (a.content) turns.push({ role: 'assistant', content: a.content });
     });
 
@@ -896,7 +1306,7 @@
     const messages = [{ role: 'system', content: SYSTEM_PROMPT }, ...kept];
 
     // 动态内容全部放在最后一条，避免破坏可缓存的稳定前缀
-    messages.push({ role: 'user', content: composeUserMessage(node) });
+    messages.push({ role: 'user', content: currentUserContent(node) });
 
     return messages;
   }
@@ -1078,6 +1488,13 @@
 
   async function generate(opts) {
     const id = uid();
+    const docs = (opts.docs || []).filter((d) => d.status === 'ready' && d.text);
+    const images = (opts.images || []).filter((im) => im.status === 'ready' && im.full);
+
+    // 文档正文直接嵌进提示词：对任何模型都可用，且能随历史自然回放、利于缓存
+    const docBlock = docs.map((d) => `【附件：${d.name}】\n"""\n${d.text}\n"""`).join('\n\n');
+    const fullPrompt = docBlock ? docBlock + '\n\n' + opts.prompt : opts.prompt;
+
     const node = {
       id,
       parentId: opts.parentId || null,
@@ -1086,8 +1503,11 @@
       content: '',
       reasoning: '',
       finish: null,
-      prompt: opts.prompt,
+      title: opts.prompt,
+      prompt: fullPrompt,
       sourceText: opts.sourceText || '',
+      docs: docs.map((d) => ({ name: d.name, chars: d.text.length })),
+      images: images.map((im) => ({ name: im.name, thumb: im.thumb })),
       createdAt: Date.now(),
       status: 'streaming',
       collapsed: false,
@@ -1095,6 +1515,7 @@
       children: [],
       parallels: [],
     };
+    if (images.length) sessionImages.set(id, images.map((im) => im.full));
 
     state.nodes[id] = node;
     const parent = node.parentId ? state.nodes[node.parentId] : null;
@@ -1327,10 +1748,19 @@
   composer.addEventListener('submit', (e) => {
     e.preventDefault();
     const value = promptInput.value.trim();
-    if (!value) return;
+    const ready = pendingAttachments.filter((a) => a.status === 'ready');
+    if (!value && !ready.length) return;
     promptInput.value = '';
     autoResize();
-    generate({ parentId: null, kind: 'root', prompt: value, sourceText: '' });
+    generate({
+      parentId: null,
+      kind: 'root',
+      prompt: value || '请阅读我附带的资料并概括要点。',
+      sourceText: '',
+      docs: ready.filter((a) => a.kind === 'doc'),
+      images: ready.filter((a) => a.kind === 'image'),
+    });
+    clearAttachments();
   });
 
   clearBtn.addEventListener('click', () => {
@@ -1625,6 +2055,7 @@
     render();
     initPanning();
     initSelectionButton();
+    initAttachments();
     initThemePanel();
     loadTheme();
     if (state.roots.length) centerView();

@@ -32,6 +32,8 @@ const KEY_SOURCE = ENV_FILE_KEY
     ? '系统环境变量'
     : '未配置';
 const MAX_TOKENS = Math.max(64, Number(process.env.DEEPSEEK_MAX_TOKENS || 2048));
+// 带图片的请求体会明显变大，这里给 /api/chat 放宽上限（DeepSeek 侧约 48MiB）
+const MAX_CHAT_BODY = Math.max(1_000_000, Number(process.env.MAX_CHAT_BODY || 24 * 1024 * 1024));
 const API_BASE = (process.env.DEEPSEEK_BASE_URL || 'https://api.deepseek.com').replace(/\/+$/, '');
 const DEFAULT_MODEL = process.env.DEEPSEEK_MODEL || 'deepseek-flash';
 
@@ -222,9 +224,9 @@ async function handleChat(req, res) {
 
   let payload;
   try {
-    payload = JSON.parse(await readBody(req));
+    payload = JSON.parse(await readBody(req, MAX_CHAT_BODY));
   } catch {
-    return sendJson(res, 400, { error: '请求体不是合法 JSON' });
+    return sendJson(res, 400, { error: '请求体不是合法 JSON（或附件过大）' });
   }
 
   const messages = Array.isArray(payload.messages) ? payload.messages : null;
