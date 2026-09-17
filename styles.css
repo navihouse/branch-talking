@@ -237,9 +237,21 @@ body::before {
 .parallel-col .node-col > .card.collapsed { width: 96px; height: 96px; }
 
 /* 鍏抽敭锛氫笉闄愬埗瀛愬垎鏀搴︼紝瀛愬崱鐗囦笉浼氳鐖跺鍣ㄥ帇绐勩€佷篃涓嶄細涓庝晶鏍忛噸鍙?*/
+/* 子卡片：横向并排（平行），间距由 JS 按“下游规模”逐张计算（childIndent） */
 .children-wrap {
-  margin: 20px 0 0 28px;
+  display: flex;
+  flex-direction: row;
+  align-items: flex-start;
+  gap: 0;
+  margin: 24px 0 0 0;
   width: max-content;
+}
+.children-wrap > .branch { flex: 0 0 auto; }
+
+/* 侧栏（平行分支）内部仍用纵向排列，避免把侧栏撑得过宽 */
+.parallel-col .children-wrap {
+  flex-direction: column;
+  gap: 12px;
 }
 
 /* 渚ф爮閲岀殑骞宠鍗＄墖鏇寸揣鍑?*/
@@ -743,6 +755,9 @@ body::before {
   animation: sel-pop 0.12s ease both;
   user-select: none;
 }
+/* 注意：作者样式里的 display 会覆盖 [hidden] 的 UA display:none，必须显式处理 */
+.sel-btn[hidden] { display: none; }
+
 .sel-btn:hover {
   color: #0b0c0e;
   background: var(--accent-3);

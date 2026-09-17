@@ -378,8 +378,41 @@
     return el;
   }
 
+  // 子树规模：下游卡片（子卡片 + 平行卡片，递归）总数。
+  // 参考 d3.tree 的 separation 思路：分支越“重”，离主干越远。
+  let subtreeSizes = new Map();
+
+  function subtreeSize(node) {
+    if (!node) return 0;
+    const cached = subtreeSizes.get(node.id);
+    if (cached !== undefined) return cached;
+    let count = 0;
+    (node.children || []).forEach((id) => {
+      const c = state.nodes[id];
+      if (c) count += 1 + subtreeSize(c);
+    });
+    (node.parallels || []).forEach((id) => {
+      const p = state.nodes[id];
+      if (p) count += 1 + subtreeSize(p);
+    });
+    subtreeSizes.set(node.id, count);
+    return count;
+  }
+
+  const CHILD_GAP = 34;
+  const CHILD_INDENT_STEP = 10;
+  const CHILD_INDENT_MAX = 150;
+  const SIDE_INDENT = 26;
+
+  // 子卡片的横向间距 = 基础间距 + 与下游规模正相关的额外距离（有上限）
+  function childIndent(node) {
+    const extra = Math.min(CHILD_INDENT_MAX, subtreeSize(node) * CHILD_INDENT_STEP);
+    return CHILD_GAP + extra;
+  }
+
   // 结构：主卡片居中；+ 子卡片在主卡片【下方】；~ 平行卡片在主卡片【两侧】
-  function renderBranch(node, depth) {
+  // side=true 表示当前位于侧栏（平行分支）内部，不再叠加额外偏移，避免列被撑宽
+  function renderBranch(node, depth, side) {
     const d = depth || 0;
     const branch = document.createElement('div');
     branch.className = 'branch';
@@ -395,7 +428,7 @@
     (node.parallels || []).forEach((pid, i) => {
       const p = state.nodes[pid];
       if (!p) return;
-      (i % 2 === 0 ? left : right).appendChild(renderBranch(p, d + 1));
+      (i % 2 === 0 ? left : right).appendChild(renderBranch(p, d + 1, true));
     });
 
     const nodeCol = document.createElement('div');
@@ -406,7 +439,10 @@
     kids.className = 'children-wrap';
     (node.children || []).forEach((cid) => {
       const c = state.nodes[cid];
-      if (c) kids.appendChild(renderBranch(c, d + 1));
+      if (!c) return;
+      const el = renderBranch(c, d + 1, side);
+      el.style.marginLeft = (side ? SIDE_INDENT : childIndent(c)) + 'px';
+      kids.appendChild(el);
     });
     if (kids.children.length) nodeCol.appendChild(kids);
 
@@ -455,6 +491,7 @@
     app.classList.toggle('empty', state.roots.length === 0);
     tree.innerHTML = '';
     hideSelBtn();
+    subtreeSizes = new Map();
 
     linksSvg = document.createElementNS('http://www.w3.org/2000/svg', 'svg');
     linksSvg.setAttribute('id', 'links');
@@ -612,6 +649,8 @@
     }
     closeAllComposers();
     expandCard(card);
+    hideSelBtn();
+    clearSelection();
 
     form.dataset.mode = mode;
     form.dataset.source = sourceText || '';
@@ -722,6 +761,11 @@
   let selText = '';
   let selRaf = null;
 
+  function clearSelection() {
+    const sel = window.getSelection();
+    if (sel && sel.removeAllRanges) sel.removeAllRanges();
+  }
+
   function getSelectionInfo() {
     const sel = window.getSelection();
     if (!sel || sel.rangeCount === 0 || sel.isCollapsed) return null;
@@ -730,11 +774,12 @@
     const range = sel.getRangeAt(0);
     const node = range.commonAncestorContainer;
     const el = node.nodeType === 1 ? node : node.parentElement;
-    if (!el) return null;
+    if (!el || !el.isConnected) return null;
     const body = el.closest ? el.closest('.card-body') : null;
-    if (!body) return null;
+    if (!body || !body.isConnected) return null;
     const card = body.closest('.card');
-    if (!card) return null;
+    // 卡片被重新渲染后旧选区会指向游离节点，这里必须过滤掉
+    if (!card || !card.isConnected) return null;
     const rect = range.getBoundingClientRect();
     if (!rect.width && !rect.height) return null;
     return { card, text, rect };
@@ -788,9 +833,19 @@
       if (!selTarget) return;
       const card = selTarget;
       const text = selText;
-      selBtn.hidden = true;
+      hideSelBtn();
+      clearSelection();
       openComposer(card, 'parallel', text);
     });
+
+    // 点到别处（按钮以外）立即收起浮动按钮
+    document.addEventListener(
+      'mousedown',
+      (e) => {
+        if (!selBtn.hidden && !selBtn.contains(e.target)) hideSelBtn();
+      },
+      true
+    );
   }
 
   /* ---------------- generation ---------------- */
@@ -1229,6 +1284,8 @@
       sourceText: form.dataset.source || '',
     };
     closeComposer(form);
+    hideSelBtn();
+    clearSelection();
     generate(opts);
   });
 

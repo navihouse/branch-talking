@@ -12,5 +12,5 @@ node_modules/
 .vscode/
 .idea/
 
-# 背景图片
-*.jpg
+# 主题背景图片（个人素材，通常含版权/隐私，不入库；配色仍保存在 package.json）
+theme-bg.*
