@@ -10,11 +10,27 @@
   "theme": {
     "background": {
       "color": "#0B0C0E",
-      "image": "/theme-bg.jpg",
-      "imageOpacity": 0.56
+      "image": "",
+      "imageOpacity": 0.35
     },
     "cardRoot": "#111317",
     "cardChild": "#111317",
     "cardParallel": "#111317"
+  },
+  "permission": {
+    "skill": {
+      "1start-mathmodel*": "ask",
+      "2analysis-modeling": "ask",
+      "3coding-visual": "ask",
+      "4drawio": "ask",
+      "5writing": "ask",
+      "6verity": "ask",
+      "doctor": "ask",
+      "mathmodel-figure-templates": "ask",
+      "typst-author": "ask",
+      "_references": "deny",
+      "ark-ui": "allow",
+      "learn-code-architecture": "ask"
+    }
   }
 }

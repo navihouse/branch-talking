@@ -49,6 +49,15 @@
   const attachInput = document.getElementById('attachInput');
   const attachStrip = document.getElementById('attachStrip');
   const dropMask = document.getElementById('dropMask');
+  const skillBtn = document.getElementById('skillBtn');
+  const skillPanel = document.getElementById('skillPanel');
+  const skillList = document.getElementById('skillList');
+  const skillClose = document.getElementById('skillClose');
+  const skillRefresh = document.getElementById('skillRefresh');
+  const confirmMask = document.getElementById('confirmMask');
+  const confirmText = document.getElementById('confirmText');
+  const confirmYes = document.getElementById('confirmYes');
+  const confirmNo = document.getElementById('confirmNo');
   const themeBtn = document.getElementById('themeBtn');
   const themePanel = document.getElementById('themePanel');
   const themeClose = document.getElementById('themeClose');
@@ -88,6 +97,7 @@
         n.parallels = n.parallels || [];
         n.images = n.images || [];
         n.docs = n.docs || [];
+        n.skills = n.skills || [];
         if (!n.title) n.title = n.prompt || '';
         if (n.status === 'streaming') n.status = 'interrupted';
         const kept = [];
@@ -348,9 +358,10 @@
 
     card.appendChild(head);
 
-    // 这条提问附带的资料（图片缩略图 / 文档名）
-    const atts = (node.images || [])
-      .map((im) => ({ name: im.name, thumb: im.thumb, icon: '🖼' }))
+    // 这条提问附带的资料（技能 / 图片缩略图 / 文档名）
+    const atts = (node.skills || [])
+      .map((s) => ({ name: s.name, icon: '⚡', sub: 'skill' }))
+      .concat((node.images || []).map((im) => ({ name: im.name, thumb: im.thumb, icon: '🖼' })))
       .concat((node.docs || []).map((d) => ({ name: d.name, icon: '📄', sub: d.chars ? d.chars + ' 字' : '' })));
     if (atts.length) {
       const strip = document.createElement('div');
@@ -1172,7 +1183,16 @@
     }
     attachStrip.hidden = false;
     pendingAttachments.forEach((att) => {
-      const icon = att.status === 'loading' ? '…' : att.status === 'error' ? '⚠' : att.kind === 'image' ? '🖼' : '📄';
+      const icon =
+        att.status === 'loading'
+          ? '…'
+          : att.status === 'error'
+            ? '⚠'
+            : att.kind === 'image'
+              ? '🖼'
+              : att.kind === 'skill'
+                ? '⚡'
+                : '📄';
       attachStrip.appendChild(
         attachChipEl({
           id: att.id,
@@ -1190,6 +1210,184 @@
   function clearAttachments() {
     pendingAttachments = [];
     renderAttachments();
+  }
+
+  /* ---------------- 技能（opencode 规范：skill/<name>/SKILL.md） ---------------- */
+
+  let skillsCache = [];
+
+  function setBadge(el, text, cls) {
+    el.className = 'badge' + (cls ? ' ' + cls : '');
+    el.textContent = text;
+  }
+
+  function renderSkillList() {
+    skillList.innerHTML = '';
+    if (!skillsCache.length) {
+      const empty = document.createElement('div');
+      empty.className = 'skill-empty';
+      empty.innerHTML = '没有发现技能。<br>把技能放到 <code>skill/&lt;name&gt;/SKILL.md</code> 后点「刷新」。';
+      skillList.appendChild(empty);
+      return;
+    }
+    skillsCache.forEach((s) => {
+      const item = document.createElement('div');
+      item.className = 'skill-item' + (s.permission === 'deny' ? ' disabled' : '') + (s.valid ? '' : ' invalid');
+      item.dataset.skill = s.name;
+
+      const main = document.createElement('div');
+      main.className = 'skill-main';
+
+      const nm = document.createElement('div');
+      nm.className = 'skill-name';
+      nm.textContent = s.name;
+      main.appendChild(nm);
+
+      const desc = document.createElement('div');
+      desc.className = 'skill-desc';
+      desc.textContent = s.description || '（没有 description）';
+      main.appendChild(desc);
+
+      const badges = document.createElement('div');
+      badges.className = 'skill-badges';
+      const pb = document.createElement('span');
+      setBadge(pb, s.permission, s.permission);
+      badges.appendChild(pb);
+      if (s.license) {
+        const l = document.createElement('span');
+        setBadge(l, s.license, '');
+        badges.appendChild(l);
+      }
+      if (s.files && s.files.length) {
+        const f = document.createElement('span');
+        setBadge(f, s.files.length + ' 个附带文件', '');
+        badges.appendChild(f);
+      }
+      if (!s.valid) {
+        const w = document.createElement('span');
+        setBadge(w, s.problems.join('；'), 'warn');
+        badges.appendChild(w);
+      }
+      main.appendChild(badges);
+      item.appendChild(main);
+
+      item.addEventListener('click', () => {
+        if (s.permission === 'deny') {
+          toast(`技能 ${s.name} 被 package.json 的 permission.skill 设为 deny`);
+          return;
+        }
+        if (!s.valid) {
+          toast(`技能 ${s.name} 定义有误：${s.problems.join('；')}`);
+          return;
+        }
+        skillPanel.hidden = true;
+        loadSkill(s.name);
+      });
+
+      skillList.appendChild(item);
+    });
+  }
+
+  async function refreshSkills() {
+    try {
+      const res = await fetch('/api/skills', { cache: 'no-store' });
+      const json = await res.json();
+      skillsCache = (json && json.skills) || [];
+    } catch {
+      skillsCache = [];
+    }
+    renderSkillList();
+  }
+
+  let confirmResolver = null;
+  function askConfirm(html) {
+    confirmText.innerHTML = html;
+    confirmMask.hidden = false;
+    return new Promise((resolve) => {
+      confirmResolver = resolve;
+    });
+  }
+  function closeConfirm(value) {
+    if (confirmMask.hidden) return;
+    confirmMask.hidden = true;
+    if (confirmResolver) {
+      const r = confirmResolver;
+      confirmResolver = null;
+      r(value);
+    }
+  }
+
+  async function loadSkill(name) {
+    if (pendingAttachments.filter((a) => a.kind === 'skill').length >= 3) {
+      toast('最多同时加载 3 个技能');
+      return;
+    }
+    if (pendingAttachments.some((a) => a.kind === 'skill' && a.name === name)) {
+      toast(`技能 ${name} 已经加载了`);
+      return;
+    }
+
+    const post = async (confirmed) => {
+      const res = await fetch('/api/skills/load', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ name, confirmed: !!confirmed }),
+      });
+      const json = await res.json().catch(() => ({}));
+      return { status: res.status, json };
+    };
+
+    try {
+      let r = await post(false);
+      if (r.status === 409 && r.json && r.json.needConfirm) {
+        const ok = await askConfirm(
+          `技能 <code>${escapeHtml(name)}</code> 的权限是 <b>ask</b>，需要你确认后才会加载到上下文。<br><br>` +
+            escapeHtml((r.json.skill && r.json.skill.description) || '')
+        );
+        if (!ok) {
+          toast('已拒绝加载该技能');
+          return;
+        }
+        r = await post(true);
+      }
+      if (!r.json || r.json.ok !== true) {
+        toast((r.json && r.json.error) || `加载技能失败（HTTP ${r.status}）`);
+        return;
+      }
+      const s = r.json.skill;
+      pendingAttachments.push({
+        id: 'sk' + Date.now().toString(36) + Math.random().toString(36).slice(2, 5),
+        name: s.name,
+        kind: 'skill',
+        status: 'ready',
+        text: s.body || '',
+        full: '',
+        thumb: '',
+        note: 'skill · ' + s.permission,
+        description: s.description || '',
+      });
+      renderAttachments();
+      toast(`已加载技能 ${s.name}`);
+    } catch (err) {
+      toast('加载技能失败：' + ((err && err.message) || err));
+    }
+  }
+
+  function initSkills() {
+    skillBtn.addEventListener('click', async () => {
+      skillPanel.hidden = !skillPanel.hidden;
+      if (!skillPanel.hidden) await refreshSkills();
+    });
+    skillClose.addEventListener('click', () => {
+      skillPanel.hidden = true;
+    });
+    skillRefresh.addEventListener('click', refreshSkills);
+
+    confirmYes.addEventListener('click', () => closeConfirm(true));
+    confirmNo.addEventListener('click', () => closeConfirm(false));
+    confirmMask.addEventListener('click', (e) => {
+      if (e.target === confirmMask) closeConfirm(false);
+    });
   }
 
   function initAttachments() {
@@ -1490,10 +1688,13 @@
     const id = uid();
     const docs = (opts.docs || []).filter((d) => d.status === 'ready' && d.text);
     const images = (opts.images || []).filter((im) => im.status === 'ready' && im.full);
+    const skills = (opts.skills || []).filter((s) => s.status === 'ready' && s.text);
 
-    // 文档正文直接嵌进提示词：对任何模型都可用，且能随历史自然回放、利于缓存
+    // 技能说明放最前，其次文档正文，最后是用户提问
+    const skillBlock = skills.map((s) => `【技能：${s.name}】\n${s.text}`).join('\n\n');
     const docBlock = docs.map((d) => `【附件：${d.name}】\n"""\n${d.text}\n"""`).join('\n\n');
-    const fullPrompt = docBlock ? docBlock + '\n\n' + opts.prompt : opts.prompt;
+    const head = [skillBlock, docBlock].filter(Boolean).join('\n\n');
+    const fullPrompt = head ? head + '\n\n' + opts.prompt : opts.prompt;
 
     const node = {
       id,
@@ -1508,6 +1709,7 @@
       sourceText: opts.sourceText || '',
       docs: docs.map((d) => ({ name: d.name, chars: d.text.length })),
       images: images.map((im) => ({ name: im.name, thumb: im.thumb })),
+      skills: skills.map((s) => ({ name: s.name, description: s.description || '' })),
       createdAt: Date.now(),
       status: 'streaming',
       collapsed: false,
@@ -1723,6 +1925,8 @@
     if (e.key === 'Escape') {
       restoreAllMaximized();
       themePanel.hidden = true;
+      skillPanel.hidden = true;
+      closeConfirm(false);
     }
   });
 
@@ -1759,6 +1963,7 @@
       sourceText: '',
       docs: ready.filter((a) => a.kind === 'doc'),
       images: ready.filter((a) => a.kind === 'image'),
+      skills: ready.filter((a) => a.kind === 'skill'),
     });
     clearAttachments();
   });
@@ -2056,6 +2261,7 @@
     initPanning();
     initSelectionButton();
     initAttachments();
+    initSkills();
     initThemePanel();
     loadTheme();
     if (state.roots.length) centerView();

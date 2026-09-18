@@ -46,6 +46,58 @@
 - 全部解析都在**本机浏览器**完成，文件不会上传到第三方服务（图片会作为多模态内容发给 DeepSeek）。
 - 卡片左上角会显示这条提问附带了哪些文件（图片带缩略图）。
 
+**技能（Skills）**
+
+按 [opencode 的 Agent Skills 规范](https://opencode.ai/docs/skills/) 组织，一个技能一个目录：
+
+```
+skill/<name>/SKILL.md      # 必须全大写 SKILL.md
+skill/<name>/...           # 可选的附带文件（脚本 / 参考数据）
+```
+
+`SKILL.md` 必须以 YAML frontmatter 开头：
+
+```markdown
+---
+name: ark-ui
+description: 一句话说明这个技能做什么、什么时候用它（必填，1–1024 字符）
+license: MIT
+compatibility: opencode
+metadata:
+  audience: frontend
+---
+## 我做什么
+- …
+```
+
+命名规则：`^[a-z0-9]+(-[a-z0-9]+)*$`，1–64 字符，且**必须与目录名一致**。
+
+**权限在 `package.json` 里控制**，支持通配符，后匹配的规则覆盖先匹配的，未命中默认 `allow`：
+
+```json
+"permission": {
+  "skill": {
+    "1start-mathmodel*": "ask",
+    "doctor": "ask",
+    "_references": "deny",
+    "ark-ui": "allow"
+  }
+}
+```
+
+| 权限 | 行为 |
+| --- | --- |
+| `allow` | 点一下就加载 |
+| `ask` | 弹出确认框，同意后才加载 |
+| `deny` | 面板中置灰不可点，服务端直接回 `403` |
+
+**使用**：点输入框左侧的 **⚡** 打开技能面板 → 点技能名加载 → 附件条出现 `⚡ 技能名` → 发送。
+技能说明会以 `【技能：名字】` 的形式**注入到提问最前面**（在文档之前），所以它既是当次指令，也会随对话历史自然回放。
+
+- 接口：`GET /api/skills` 列出技能与解析后的权限；`POST /api/skills/load` 加载内容（`ask` 必须带 `confirmed:true`，`deny` 一律 403）。
+- 面板里会标出 `license`、附带文件数量，以及 frontmatter 不合规的具体原因。
+- 参考 `skill/_references/README.md`：**没有 `SKILL.md` 的目录不会被当成技能**。
+
 **其它**
 
 - **卡片层级清晰**：子卡片在主卡片下方、位于卡片元素之外；平行卡片在主卡片两侧，都不会被包进主卡片里。
@@ -69,6 +121,7 @@ server.mjs          零依赖 Node 服务：静态托管 + /api/chat 流式代�
 vendor/katex/       本地 KaTeX（katex.min.js / css / woff2 字体）
 vendor/pdfjs/       本地 pdf.js（pdf.min.mjs + worker，用于 PDF 文字抽取）
 pdfjs-loader.mjs    把 pdf.js 挂到 window（独立文件以满足 CSP：禁止内联脚本）
+skill/              技能目录（skill/<name>/SKILL.md，权限见 package.json 的 permission.skill）
 theme-bg.png        主题背景图片（导入后自动生成，路径记录在 package.json 的 theme 里）
 .env                DEEPSEEK_API_KEY=...（不提交）
 .env.example        配置模板
@@ -120,6 +173,7 @@ theme-bg.png        主题背景图片（导入后自动生成，路径记录在
 
 - 底部输入框输入提示词，`Enter` 发送（`Shift+Enter` 换行），生成第一张卡片。
 - **点 📎 / 拖拽文件到页面 / Ctrl+V 粘贴图片**即可添加文档或图片附件，附件条里可以逐个移除。
+- **点 ⚡ 打开技能面板**，按 `package.json` 的 `permission.skill` 加载技能（allow 直接加载 / ask 需确认 / deny 拒绝）。
 - **按住空白处拖动**可以平移视角；滚轮上下滚动。
 - 在任意 AI 卡片上：
   - 点 `+` → 填写提示词 → 生成**子卡片**（在主卡片正下方）。

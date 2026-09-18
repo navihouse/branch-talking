@@ -9,7 +9,8 @@ let ENV_FILE_KEY = false;
 function loadEnv() {
   const envPath = path.join(__dirname, '.env');
   if (!fs.existsSync(envPath)) return;
-  for (const line of fs.readFileSync(envPath, 'utf8').split(/\r?\n/)) {
+  const text = fs.readFileSync(envPath, 'utf8').replace(/^\uFEFF/, '');
+  for (const line of text.split(/\r?\n/)) {
     const m = line.match(/^\s*([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$/);
     if (!m) continue;
     let v = m[2];
@@ -110,7 +111,9 @@ const DEFAULT_THEME = {
 
 function readPkg() {
   try {
-    return JSON.parse(fs.readFileSync(PKG_PATH, 'utf8'));
+    // Windows 编辑器常写入 UTF-8 BOM，JSON.parse 会直接失败，这里先剥掉
+    const text = fs.readFileSync(PKG_PATH, 'utf8').replace(/^\uFEFF/, '');
+    return JSON.parse(text);
   } catch {
     return {};
   }
@@ -213,6 +216,173 @@ async function handleThemePost(req, res) {
     return sendJson(res, 500, { error: `写入 package.json 失败：${err.message}` });
   }
   return sendJson(res, 200, { ok: true, theme });
+}
+
+/* ---------------- 技能（按 opencode 规范：skill/<name>/SKILL.md） ---------------- */
+
+const SKILL_DIR = path.join(__dirname, 'skill');
+const SKILL_NAME_RE = /^[a-z0-9]+(-[a-z0-9]+)*$/;
+
+function unquoteYaml(v) {
+  const s = String(v == null ? '' : v).trim();
+  if ((s.startsWith('"') && s.endsWith('"')) || (s.startsWith("'") && s.endsWith("'"))) {
+    return s.slice(1, -1);
+  }
+  return s;
+}
+
+// 极简 YAML frontmatter 解析：顶层 key: value，以及一层缩进的嵌套 map（如 metadata）
+function parseFrontmatter(text) {
+  const m = /^---\r?\n([\s\S]*?)\r?\n---\r?\n?/.exec(String(text || ''));
+  if (!m) return { data: {}, body: String(text || '') };
+  const data = {};
+  let nestedKey = null;
+  for (const line of m[1].split(/\r?\n/)) {
+    if (!line.trim() || /^\s*#/.test(line)) continue;
+    const kv = line.match(/^(\s*)([A-Za-z0-9_-]+)\s*:\s*(.*)$/);
+    if (!kv) continue;
+    const indented = kv[1].length > 0;
+    const key = kv[2];
+    const value = kv[3];
+    if (indented && nestedKey && data[nestedKey] && typeof data[nestedKey] === 'object') {
+      data[nestedKey][key] = unquoteYaml(value);
+      continue;
+    }
+    if (!value.trim()) {
+      nestedKey = key;
+      data[key] = {};
+    } else {
+      nestedKey = null;
+      data[key] = unquoteYaml(value);
+    }
+  }
+  return { data, body: String(text || '').slice(m[0].length) };
+}
+
+function wildcardRegExp(pattern) {
+  const escaped = String(pattern)
+    .split('*')
+    .map((part) => part.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'))
+    .join('.*');
+  return new RegExp('^' + escaped + '$');
+}
+
+// 后匹配的规则覆盖先匹配的；没有任何规则命中 => allow（与 opencode 默认一致）
+function resolveSkillPermission(name, rules) {
+  let result = 'allow';
+  for (const [pattern, perm] of Object.entries(rules || {})) {
+    if (!wildcardRegExp(pattern).test(name)) continue;
+    const p = String(perm).toLowerCase();
+    if (p === 'allow' || p === 'ask' || p === 'deny') result = p;
+  }
+  return result;
+}
+
+function listSkillFiles(dir) {
+  const out = [];
+  const walk = (base, rel, depth) => {
+    if (depth > 2 || out.length > 60) return;
+    let entries = [];
+    try {
+      entries = fs.readdirSync(base, { withFileTypes: true });
+    } catch {
+      return;
+    }
+    for (const e of entries) {
+      const r = rel ? rel + '/' + e.name : e.name;
+      if (e.isDirectory()) walk(path.join(base, e.name), r, depth + 1);
+      else if (e.name !== 'SKILL.md') out.push(r);
+    }
+  };
+  walk(dir, '', 0);
+  return out;
+}
+
+function listSkills() {
+  const rules = ((readPkg().permission || {}).skill) || {};
+  let entries = [];
+  try {
+    entries = fs.readdirSync(SKILL_DIR, { withFileTypes: true });
+  } catch {
+    return [];
+  }
+  const skills = [];
+  for (const e of entries) {
+    if (!e.isDirectory()) continue;
+    const dirPath = path.join(SKILL_DIR, e.name);
+    const filePath = path.join(dirPath, 'SKILL.md');
+    if (!fs.existsSync(filePath)) continue;
+
+    let raw = '';
+    try {
+      raw = fs.readFileSync(filePath, 'utf8');
+    } catch {
+      continue;
+    }
+    const { data, body } = parseFrontmatter(raw);
+    const name = String(data.name || '').trim();
+    const description = String(data.description || '').trim();
+
+    const problems = [];
+    if (!name) problems.push('缺少 name');
+    if (!description) problems.push('缺少 description');
+    if (name && name !== e.name) problems.push('name 与目录名不一致');
+    if (name && !SKILL_NAME_RE.test(name)) problems.push('name 需匹配 ^[a-z0-9]+(-[a-z0-9]+)*$');
+    if (description && description.length > 1024) problems.push('description 超过 1024 字符');
+
+    const permission = resolveSkillPermission(name || e.name, rules);
+    skills.push({
+      name: name || e.name,
+      dir: e.name,
+      description,
+      license: String(data.license || ''),
+      compatibility: String(data.compatibility || ''),
+      metadata: data.metadata && typeof data.metadata === 'object' ? data.metadata : {},
+      valid: problems.length === 0,
+      problems,
+      permission,
+      bodyLength: body.trim().length,
+      files: listSkillFiles(dirPath),
+    });
+  }
+  skills.sort((a, b) => a.name.localeCompare(b.name));
+  return skills;
+}
+
+async function handleSkillLoad(req, res) {
+  let payload;
+  try {
+    payload = JSON.parse(await readBody(req));
+  } catch {
+    return sendJson(res, 400, { error: '请求体不是合法 JSON' });
+  }
+  const name = String(payload.name || '').trim();
+  if (!SKILL_NAME_RE.test(name)) return sendJson(res, 400, { error: '技能名不合法' });
+
+  const skill = listSkills().find((s) => s.name === name);
+  if (!skill) return sendJson(res, 404, { error: '技能不存在' });
+  if (!skill.valid) return sendJson(res, 400, { error: '技能定义有误：' + skill.problems.join('；') });
+
+  // 服务端强制权限：deny 一律拒绝；ask 必须带 confirmed 才返回内容
+  if (skill.permission === 'deny') {
+    return sendJson(res, 403, { error: `技能 ${name} 已被 package.json 的 permission.skill 拒绝（deny）` });
+  }
+  if (skill.permission === 'ask' && payload.confirmed !== true) {
+    return sendJson(res, 409, {
+      ok: false,
+      needConfirm: true,
+      skill: { name: skill.name, description: skill.description, permission: skill.permission },
+    });
+  }
+
+  let raw = '';
+  try {
+    raw = fs.readFileSync(path.join(SKILL_DIR, skill.dir, 'SKILL.md'), 'utf8');
+  } catch (err) {
+    return sendJson(res, 500, { error: `读取技能失败：${err.message}` });
+  }
+  const { body } = parseFrontmatter(raw);
+  return sendJson(res, 200, { ok: true, skill: { ...skill, body: body.trim() } });
 }
 
 async function handleChat(req, res) {
@@ -356,6 +526,17 @@ const server = http.createServer(async (req, res) => {
       maxTokens: MAX_TOKENS,
       thinking: (process.env.DEEPSEEK_THINKING || 'disabled').toLowerCase() === 'enabled',
     });
+  }
+
+  if (url.pathname === '/api/skills') {
+    if (req.method !== 'GET') return sendJson(res, 405, { error: 'Method Not Allowed' });
+    return sendJson(res, 200, { ok: true, dir: 'skill', skills: listSkills() });
+  }
+
+  if (url.pathname === '/api/skills/load') {
+    if (req.method !== 'POST') return sendJson(res, 405, { error: 'Method Not Allowed' });
+    if (!isLocalRequest(req)) return sendJson(res, 403, { error: '拒绝跨站请求' });
+    return handleSkillLoad(req, res);
   }
 
   if (url.pathname === '/api/theme') {

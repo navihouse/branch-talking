@@ -50,6 +50,7 @@
       <div id="attachStrip" class="attach-strip" hidden></div>
       <div class="composer-main">
         <button id="attachBtn" class="attach-btn" type="button" title="添加文档 / 图片（也可直接拖拽或粘贴）">📎</button>
+        <button id="skillBtn" class="attach-btn" type="button" title="加载技能（skill/&lt;name&gt;/SKILL.md）">⚡</button>
         <textarea id="promptInput" rows="1" placeholder="输入提示词，Enter 发送 · Shift+Enter 换行 · 可拖入文档或图片"></textarea>
         <button type="submit" class="btn primary" id="sendBtn">发送</button>
       </div>
@@ -64,6 +65,30 @@
     />
 
     <div id="dropMask" class="drop-mask" hidden><span>松开即可添加文档 / 图片</span></div>
+
+    <div id="skillPanel" class="skill-panel" hidden>
+      <div class="skill-head">
+        <span>技能</span>
+        <button id="skillRefresh" class="btn ghost small" type="button">刷新</button>
+        <button id="skillClose" class="wbtn wbtn-close" type="button" title="关闭">✕</button>
+      </div>
+      <div id="skillList" class="skill-list"></div>
+      <div class="skill-note">
+        存放于 <code>skill/&lt;name&gt;/SKILL.md</code>，权限由 <code>package.json</code> 的
+        <code>permission.skill</code> 控制：<b>allow</b> 直接加载 · <b>ask</b> 需确认 · <b>deny</b> 拒绝
+      </div>
+    </div>
+
+    <div id="confirmMask" class="confirm-mask" hidden>
+      <div class="confirm-box">
+        <div class="confirm-title">需要确认</div>
+        <div id="confirmText" class="confirm-text"></div>
+        <div class="confirm-actions">
+          <button id="confirmNo" class="btn ghost small" type="button">拒绝</button>
+          <button id="confirmYes" class="btn primary small" type="button">允许</button>
+        </div>
+      </div>
+    </div>
 
     <div id="toast" class="toast" hidden></div>
 
